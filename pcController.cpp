@@ -1,11 +1,17 @@
 #include "pcController.hpp"
-
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 /*Alias*/
 namespace rc = pcController;
 
 /*Global variables*/
 int rc::pcController::send_count = 0;
 int rc::pcController::recv_count = 0;
+int rc::pcController::handler_count = 0;
+std::mutex mtx;
+std::condition_variable cv;
+bool dataReady = false;
 /*Constructor Definition*/
 rc::pcController::pcController()
 {
@@ -51,7 +57,9 @@ rc::pcController::pcController()
 /*Destructor Definition*/
 rc::pcController::~pcController()
 {
-    /*DO NOTHING*/
+    /*Kill Processes listening to port*/
+    system("fuser -k 8080/tcp");
+    std::cout <<"End Program" << std::endl;
 }
 void rc::pcController::pcTransmit(const std::string& msg)
 {
@@ -71,69 +79,82 @@ void rc::pcController::pcTransmit(const std::string& msg)
 }
 void rc::pcController::pcReceive()
 {
-    char buff[1024];
-    ssize_t bytesReceived = recv(clientSocket, buff, sizeof(buff) - 1, 0);
-    if (0 < bytesReceived)
-        {
-            /*Add Null Terminator*/
-            buff[bytesReceived] = '\0';
-            /*Successfull Receive*/
-            recv_count++;
-            std::cout << "Rx counts : " << recv_count << std::endl;
-            commands.push(buff);
+    while(true)
+    {
+        char buff[1024];
+        ssize_t bytesReceived = recv(clientSocket, buff, sizeof(buff) - 1, 0);
+        if (0 < bytesReceived)
+            {
+                /*Add Null Terminator*/
+                buff[bytesReceived] = '\0';
+                /*Successfull Receive*/
+                recv_count++;
+                std::cout << "Rx counts : " << recv_count << std::endl;
+                /*Lock till inseting new command to queue*/
+                std::unique_lock<std::mutex> lock(mtx);
+                commands.push(buff);
+                std::cout<< buff <<std::endl;
+                dataReady = true;
+                /*notify handler thread*/
+                cv.notify_one();
+
         }
-    
-
-
+    }
+}
+void rc::pcController::startThreads()
+{
+    std::thread t1(&rc::pcController::pcReceive ,this);
+    std::thread t2(&rc::pcController::cmdHandler ,this);
+    t1.detach();  
+    t2.join();  
 }
 void rc::pcController::close_socket()
 {
     close(serverSocket);
 }
-CMDT rc::pcController::cmdHandler()
+void rc::pcController::cmdHandler()
 {
-    CMDT ret = CMDT::RESERVED;
-    while(!commands.empty())
+    while(true)
     {
-        std::string temp = commands.front();
-        if (0 == temp.compare(std::string("Close") ))
+        std::string cmd;
+        while(!commands.empty())
+        {
+            /*Locking*/
+            std::unique_lock<std::mutex> lock(mtx);
+            /*wait receiver thread*/
+            cv.wait(lock,[](){return dataReady;});
+            cmd = commands.front();
+            commands.pop();
+        }
+        if (0 == cmd.compare("Open Gmail"))
+        {
+            system("xdg-open https://accounts.google.com");
+        }
+        else if (0 == cmd.compare("reboot"))
+        {
+            system("reboot");
+        }
+        else if (0 == cmd.compare("start vlc"))
+        {
+            system("cvlc Samplevideo.mp4");
+        }
+        else if (0 == cmd.compare("python3 helloworld.py"))
+        {
+            system("python3 helloworld.py");
+        }
+        else if (0 == cmd.compare("Close"))
         {
             /*Close socket*/
             std::cout << "Socket Closed" <<std::endl;
             rc::pcController::close_socket();
-            ret = CMDT::CLS_SOCKET;
-        } 
+            break;
+        }
         else
         {
-            if (0 == temp.compare("Open Gmail"))
-            {
-                system("xdg-open https://accounts.google.com");
-            }
-            else if (0 == temp.compare("reboot"))
-            {
-                system("reboot");
-            }
-            else if (0 == temp.compare("start vlc"))
-            {
-                system("cvlc Samplevideo.mp4");
-            }
-            else if (0 == temp.compare("python3 helloworld.py"))
-            {
-                system("python3 helloworld.py");
-            }
-            else
-            {
-                /*Standard Commands*/
-                system(temp.c_str());
-            }
-
-            
-            ret =  CMDT::USER_CMD;
+            /*Standard Commands*/
+            system(cmd.c_str());
         }
-        /*system delay*/
-        sleep(2);
-        commands.pop();
     }
-    return ret;
 }
+
    

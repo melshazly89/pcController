@@ -8,12 +8,7 @@
 #include <queue>
 #include <array>
 
-enum class CMDT: int
-{
-    CLS_SOCKET = 0,
-    USER_CMD   = 1, 
-    RESERVED   = 2
-}; 
+
 
 namespace pcController
 {
@@ -26,13 +21,15 @@ namespace pcController
             ~pcController();
             void pcTransmit(const std::string& str);
             void pcReceive();
+            void startThreads();
             void close_socket();
-            CMDT cmdHandler();
+            void cmdHandler();
         private:
             int serverSocket;
             int clientSocket;
             static int send_count;
             static int recv_count;
+            static int handler_count;
             std::queue<std::string> commands;
     };
 }
